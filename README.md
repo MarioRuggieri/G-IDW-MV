@@ -1,4 +1,4 @@
-# Parallel GPU Inverse Distance Weighting
+# GPGPU Inverse Distance Weighting
 A parallel GPU version of the IDW interpolation algorithm [1] using matrix-vector multiplication.
 
 * custom_version -> matrix vector multiplication using a thread for each scalar product
