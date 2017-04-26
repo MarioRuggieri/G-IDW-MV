@@ -11,9 +11,16 @@ void checkCUDAError(const char* msg)
     }
 }
 
-__device__ float dist(Point2D a, Point b)
+__device__ float havesineDistGPU(Point2D p1, Point2D p2)
 {
-    return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2));
+    float   lat1 = PI*p1.y/180,
+            lat2 = PI*p2.y/180,
+            dlat = PI*(p2.y-p1.y)/180,
+            dlon = PI*(p2.x-p1.x)/180,
+            a = sin(dlat/2) * sin(dlat/2) + cos(lat1) * cos(lat2) * sin(dlon/2) * sin(dlon/2),
+            c = 2 * atan2(sqrt(a), sqrt(1-a));
+
+    return R * c;
 }
 
 // IDW parallel GPU version
@@ -25,7 +32,8 @@ __global__ void parallelIDW(    Point2D *knownPoints,
                                 int KN, 
                                 int QN, 
                                 int stride,
-                                int nIter)
+                                int nIter,
+                                int MAX_SHMEM_SIZE)
 {
     extern __shared__ Point2D shMem[];
     int ind = threadIdx.x + blockIdx.x*blockDim.x, smStartInd, startInd, i, k, currentKN, shift;
@@ -71,18 +79,25 @@ __global__ void parallelIDW(    Point2D *knownPoints,
             {
                 p = shMem[i];
 
-                d = sqrt((myPoint.x - p.x)*(myPoint.x - p.x) + (myPoint.y - p.y)*(myPoint.y - p.y));
+                //d = sqrt((myPoint.x - p.x)*(myPoint.x - p.x) + (myPoint.y - p.y)*(myPoint.y - p.y));
+                d = havesineDistGPU(myPoint,p);
+
                 if (d != 0)
                 {
-                    w = 1/(d*d);
-                    //W[i*QN + ind+k*MAX_SHMEM_SIZE] = w;
-                    W[ind*KN + i+k*MAX_SHMEM_SIZE] = w;
-                    wSum += w;
+                    //if (d < SEARCH_RADIUS)
+                    //{
+                        w = 1/(d*d);
+                        W[ind*KN + i+k*MAX_SHMEM_SIZE] = w;
+                        wSum += w;
+                    //}
+                    /*else
+                    {
+                        W[ind*KN + i+k*MAX_SHMEM_SIZE] = 0;
+                    }*/
                 }
                 else
                 {
-                    memset(&W[ind],0,KN);   //zeros
-                    //W[i*QN + ind+k*MAX_SHMEM_SIZE] = 1;
+                    for (int l=0; l<KN; l++) W[ind*KN + l] = 0;
                     W[ind*KN + i+k*MAX_SHMEM_SIZE] = 1; //1 for the zero distance point
                     wSum = 1;
                     k = nIter;
@@ -98,13 +113,6 @@ __global__ void parallelIDW(    Point2D *knownPoints,
         __syncthreads();
         
     }
-
-    /*
-    if (ind < QN)
-    {
-        wSum[ind] = my_wSum;
-    }
-    */
     
     if (ind < QN)
     {
@@ -115,18 +123,25 @@ __global__ void parallelIDW(    Point2D *knownPoints,
             zValues[ind] += W[ind*KN+j]*knownValues[j];
         }
 
-         zValues[ind] /= wSum;
+        zValues[ind] /= wSum;
     }
     
 }
 
-float cpuDist(Point2D a, Point b)
+float havesineDistCPU(Point2D p1, Point2D p2)
 {
-    return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2));
+    float   lat1 = PI*p1.y/180,
+            lat2 = PI*p2.y/180,
+            dlat = PI*(p2.y-p1.y)/180,
+            dlon = PI*(p2.x-p1.x)/180,
+            a = sin(dlat/2) * sin(dlat/2) + cos(lat1) * cos(lat2) * sin(dlon/2) * sin(dlon/2),
+            c = 2 * atan2(sqrt(a), sqrt(1-a));
+
+    return R * c;
 }
 
 // IDW sequential CPU version
-void sequentialIDW(Point *knownPoints, Point2D *queryPoints, float *zValues, int KN, int QN)
+void sequentialIDW(Point2D *knownPoints, float* knownValues, Point2D *queryPoints, float *zValues, int KN, int QN)
 {
     int i,j;
     float wSum, w, d;
@@ -137,49 +152,98 @@ void sequentialIDW(Point *knownPoints, Point2D *queryPoints, float *zValues, int
 
         for (j=0; j<KN; j++)
         {
-            d = sqrt(   (queryPoints[i].x - knownPoints[j].x)*(queryPoints[i].x - knownPoints[j].x) + 
-                        (queryPoints[i].y - knownPoints[j].y)*(queryPoints[i].y - knownPoints[j].y));
-
+            d = havesineDistCPU(queryPoints[i],knownPoints[j]);
+            //d = sqrt(   (queryPoints[i].x - knownPoints[j].x)*(queryPoints[i].x - knownPoints[j].x) + (queryPoints[i].y - knownPoints[j].y)*(queryPoints[i].y - knownPoints[j].y));
             if (d != 0)
             {
-                w = 1/(d*d);
-              	wSum += w;
-               	zValues[i] += w*knownPoints[j].z;
+                //if (d < SEARCH_RADIUS)
+                //{
+                    w = 1/(d*d);
+                    wSum += w;
+                    zValues[i] += w*knownValues[j];
+                //}
+
             }
             else
             {
-                zValues[i] = knownPoints[j].z;
+                zValues[i] = knownValues[j];
 		        wSum = 1;
                 break;
             }
         }
-        
+
         zValues[i] /= wSum;
     }
 }
 
-// Random generation of 3D known points and 2D query points
-void generateRandomData(Point *knownPoints, Point2D *queryPoints, int a, int b, int N, int M)
+// Random generation of 2D known points and 2D query points
+void generateRandomData(Point2D *knownPoints, float *knownValues, Point2D *queryPoints, int KN, int QN)
 {
     int i;
     srand((unsigned int)time(NULL));
 
-    for (i=0; i<N; i++)
+    for (i=0; i<KN; i++)
     {
-        knownPoints[i].x = a + (rand()/(float)(RAND_MAX))* b;
-        knownPoints[i].y = a + (rand()/(float)(RAND_MAX))* b;
-        knownPoints[i].z = a + (rand()/(float)(RAND_MAX))* b;
+        knownPoints[i].x = (rand()/(float)(RAND_MAX))* 180;
+        knownPoints[i].y = (rand()/(float)(RAND_MAX))* 180;
+        knownValues[i] = (rand()/(float)(RAND_MAX))* 180;
     }
 
-    for (i=0;i<M;i++)
+    for (i=0; i<QN; i++)
     {
-        queryPoints[i].x = a + (rand()/(float)(RAND_MAX))* b;
-        queryPoints[i].y = a + (rand()/(float)(RAND_MAX))* b;
+        queryPoints[i].x = (rand()/(float)(RAND_MAX))* 90;
+        queryPoints[i].y = (rand()/(float)(RAND_MAX))* 90;
     }
-    
 }
 
-int saveData(Point *knownPoints, int KN, Point2D *queryPoints, float *zValues, float *zValuesGPU, int QN, float cpuElapsedTime, float gpuElaspedTime)
+int getLines(char *filename)
+{
+    FILE *fp = fopen(filename,"r");
+    int ch = 0, cont = 1;
+
+    while(!feof(fp))
+    {
+        ch = fgetc(fp);
+        if(ch == '\n')
+        {
+            cont++;
+        }
+    }
+
+    fclose(fp);
+
+    return cont;
+}
+
+
+void generateDataset(char *filename, Point2D *knownLocations, float *knownValues)
+{
+    FILE *fp = fopen(filename,"r");
+    int i=0;
+
+    while(fscanf(fp,"%f;%f;%f;",&(knownLocations[i].x),&(knownLocations[i].y),&(knownValues[i])) == 3)
+    {
+        i++;
+    }
+
+    fclose(fp);
+}
+
+void generateGrid(char *filename, Point2D *queryLocations)
+{
+    FILE *fp = fopen(filename,"r");
+    int i=0;
+
+    while(fscanf(fp,"%f;%f;",&(queryLocations[i].x),&(queryLocations[i].y)) == 2 )
+    {
+        i++;
+    }
+
+    fclose(fp);
+}
+
+
+int saveData(Point2D *knownPoints, int KN, Point2D *queryPoints, float *zValues, float *zValuesGPU, int QN, float cpuElapsedTime, float gpuElaspedTime)
 {
     FILE *f;
     time_t t;
@@ -208,6 +272,7 @@ int saveData(Point *knownPoints, int KN, Point2D *queryPoints, float *zValues, f
     }
 
     // Saving generated data
+    /*
     f = fopen("generatedData.txt", "w");
     if (f == NULL)
     {
@@ -219,6 +284,7 @@ int saveData(Point *knownPoints, int KN, Point2D *queryPoints, float *zValues, f
         fprintf(f, "(x: %f, y: %f, z: %f)\n", knownPoints[i].x, knownPoints[i].y, knownPoints[i].z);
     
     fclose(f);
+    */
 
     // Saving CPU output
     f = fopen("cpuOutput.txt", "w");
@@ -229,7 +295,7 @@ int saveData(Point *knownPoints, int KN, Point2D *queryPoints, float *zValues, f
     }
     
     for (int i=0; i<QN; i++)
-        fprintf(f, "(x: %f, y: %f, z: %f)\n", queryPoints[i].x, queryPoints[i].y, zValues[i]);
+        fprintf(f, "%f;%f;%f;\n", queryPoints[i].x, queryPoints[i].y, zValues[i]);
     
     fclose(f);
 
@@ -242,7 +308,7 @@ int saveData(Point *knownPoints, int KN, Point2D *queryPoints, float *zValues, f
     }
     
     for (int i=0; i<QN; i++)
-        fprintf(f, "(x: %f, y: %f, z: %f)\n", queryPoints[i].x, queryPoints[i].y, zValuesGPU[i]);
+        fprintf(f, "%f;%f;%f;\n", queryPoints[i].x, queryPoints[i].y, zValuesGPU[i]);
     
     fclose(f);
 
@@ -310,7 +376,8 @@ void getMaxAbsError(float *zValues, float *zValuesGPU, int QN, float *maxErr)
     for (i = 0; i < QN; i++)
     {
         err = abs(zValues[i]-zValuesGPU[i]);
-
+        if (err > 9.9e-6)
+            printf("ERRORE riga %d -> %lf ; %lf\n",i, zValues[i], zValuesGPU[i]);
         if (err > *maxErr)
             *maxErr = err;
     }
@@ -347,22 +414,4 @@ float getSTD(float xm, float x[], int N)
     s /= N-1;
 
     return sqrt(s);
-}
-
-void showData(Point *p, Point2D *pp, int N, int M)
-{
-    int i;
-    srand((unsigned int)time(NULL));
-    
-    printf("\nRandom generated known points:\n");
-    for (i=0; i<N; i++)
-    {
-        printf("(x: %f, y: %f, z: %f)\n", p[i].x, p[i].y, p[i].z);
-    }
-    
-    printf("\nRandom generated query points:\n");
-    for (i=0; i<M; i++)
-    {
-        printf("(x: %f, y: %f)\n", pp[i].x, pp[i].y);
-    }
 }

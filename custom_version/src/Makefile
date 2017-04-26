@@ -1,6 +1,6 @@
 IDIR = ../include
 CC=nvcc
-CFLAGS=-I$(IDIR) -lcublas
+CFLAGS=-I$(IDIR) 
 
 ODIR=obj
 dummy_build_folder := $(shell mkdir -p $(ODIR))

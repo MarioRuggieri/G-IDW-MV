@@ -2,7 +2,7 @@
 #include <string.h>
 #include "idw.h"
 
-#define N_ITER 25 
+#define N_ITER 5
 
 int main(int argc, char **argv)
 {
@@ -13,9 +13,9 @@ int main(int argc, char **argv)
             *devW, 
             *devKv;
     
-    Point   *knownPoints;//, *devKP;	
-    Point2D *queryPoints, *knownPoints_blas, *devQP, *devKP_blas;	
-    int KN, QN, sizeKP, sizeKP_blas, sizeQP, stride, shMemSize, nIter; 	
+    Point2D   *knownLocations, *queryLocations, *devQP, *devKP_blas;    
+    int KN, QN, batchQN, batchDim, stride, MAX_SHMEM_SIZE, shMemSize, nIter, N_BATCH, type;     
+    char *kp_filename, *loc_filename;
     
     // grid managing
     dim3 nBlocks, nThreadsForBlock;
@@ -26,85 +26,102 @@ int main(int argc, char **argv)
             gpuElapsedTime[N_ITER], gpuMeanTime, gpuSTD;
     clock_t cpuStartTime;
 
-    cublasHandle_t handle;
-    
-    if (argc > 3)
+    cudaDeviceProp prop;
+
+    if (argc > 5)
     {
-        KN = atoi(argv[1]);
-        QN = atoi(argv[2]);
-        nThreadsForBlock.x = atoi(argv[3]);
-        nBlocks.x = ceil((float)QN/(float)nThreadsForBlock.x);
+        type = atoi(argv[1]);
+        batchQN = atoi(argv[4]);
+        nThreadsForBlock.x = atoi(argv[5]);
     }
     else
     {
-        printf("\nUsage:\n\n ./[bin_name] [known_points_number] [locations_number] [block_threads_number]\n\n");
-	    exit(-1);
+        printf("\nUsage:\n\n1) ./[bin_name] 1 [known_points_file] [query_locations_file] [QN_chunk_size] [block_threads_number]\n\n2) ./[bin_name] 2 [known_points_number] [query_locations_number] [QN_chunk_size] [block_threads_number]\n\n");
+        exit(-1);
     }
-    
-    sizeKP = KN*sizeof(Point);
-    sizeKP_blas = KN*sizeof(Point2D);
-    sizeQP = QN*sizeof(Point2D);
-    
+
+    if (type == 1)
+    {
+        kp_filename = argv[2];
+        loc_filename = argv[3];
+
+        KN = getLines(kp_filename);
+        QN = getLines(loc_filename);
+
+        knownLocations = (Point2D *)malloc(KN*sizeof(Point2D));
+        knownValues = (float *)malloc(KN*sizeof(float));
+        queryLocations = (Point2D *)malloc(QN*sizeof(Point2D));
+
+        generateDataset(kp_filename, knownLocations, knownValues);
+        generateGrid(loc_filename, queryLocations);
+    }
+    else if (type == 2)
+    {
+        KN = atoi(argv[2]);
+        QN = atoi(argv[3]);
+
+        knownLocations = (Point2D *)malloc(KN*sizeof(Point2D));
+        knownValues = (float *)malloc(KN*sizeof(float));
+        queryLocations = (Point2D *)malloc(QN*sizeof(Point2D));
+
+        // Random generation of 3D known points and 2D query points
+        generateRandomData(knownLocations, knownValues, queryLocations, KN, QN);
+    }
+
+    /*for (int i=0; i<QN; i++)
+        printf("%lf;%lf;\n",queryLocations[i].x,queryLocations[i].y);*/
+
+    cudaGetDeviceProperties(&prop,0);
+    MAX_SHMEM_SIZE = prop.sharedMemPerBlock/sizeof(Point2D);
+
     // known points are more than shared memory size?
     if (KN < MAX_SHMEM_SIZE)
     {
-        shMemSize = KN*sizeof(Point);
+        shMemSize = KN*sizeof(Point2D);
         nIter = 1;
         stride = ceil((float)KN/(float)nThreadsForBlock.x);
     }
     else
     {
-        shMemSize = MAX_SHMEM_SIZE*sizeof(Point);
+        shMemSize = MAX_SHMEM_SIZE*sizeof(Point2D);
         nIter = ceil((float)KN/(float)MAX_SHMEM_SIZE);
         stride = ceil((float)MAX_SHMEM_SIZE/(float)nThreadsForBlock.x);
     }
-
     
-    knownPoints = (Point*)malloc(sizeKP);
-    knownPoints_blas = (Point2D*)malloc(sizeKP_blas);
-    queryPoints = (Point2D*)malloc(sizeQP);
-    knownValues = (float*)malloc(KN*sizeof(float)); // for cuBLAS
     zValues = (float*)malloc(QN*sizeof(float));
     zValuesGPU = (float*)malloc(QN*sizeof(float));
 
-    cudaMalloc((void**)&devKP_blas, sizeKP_blas);
-    cudaMalloc((void**)&devQP, sizeQP);
-    cudaMalloc((void**)&devZV, QN*sizeof(float));
+    if (batchQN > QN) batchQN = QN;
+    nBlocks.x = ceil((float)batchQN/(float)nThreadsForBlock.x);
+    N_BATCH = ceil((float)QN/(float)batchQN);
 
-    // device data for matVet
-    cudaMalloc((void**)&devW, QN*KN*sizeof(float)); //weights matrix -> zquery = W*knownValues
+    cudaMalloc((void**)&devKP_blas, KN*sizeof(Point2D));
+    cudaMalloc((void**)&devQP, batchQN*sizeof(Point2D));
+    cudaMalloc((void**)&devZV, batchQN*sizeof(float));
+
+    // device data for matrixVector
+    cudaMalloc((void**)&devW, batchQN*KN*sizeof(float)); //weights matrix -> zquery = W*knownValues
     cudaMalloc((void**)&devKv, KN*sizeof(float)); //knownValues
-
-    cublasCreate(&handle);
-
-    // generating random data for testing
-    generateRandomData(knownPoints, queryPoints, 0.0f, 100.0f, KN, QN);
-
-    // adapting data for cuBLAS version
-    for (int i=0; i<KN; i++)
-    {
-        knownValues[i] = knownPoints[i].z;
-        knownPoints_blas[i].x = knownPoints[i].x;
-        knownPoints_blas[i].y = knownPoints[i].y;
-    }
     
     printf("Data generated!\n\n");
 
     printf("Number of known points: %d\n", KN);
     printf("Number of query points: %d\n", QN);
+    printf("Iterations for query points: %d of max %d points\n", N_BATCH, batchQN);
     printf("Number of threads for block: %d\n", nThreadsForBlock.x);
     printf("Number of blocks: %d\n", nBlocks.x);
+    printf("Shared memory size: %ld bytes\n", prop.sharedMemPerBlock);
+    printf("Iterations for known points loading into shared memory: %d of max %d points\n", nIter, MAX_SHMEM_SIZE);
     printf("Stride: %d\n", stride);
-    printf("Number of iterations: %d of max %d points\n\n", nIter, MAX_SHMEM_SIZE);
+    printf("Number of iterations for mean time generation: %d\n\n", N_ITER);
 
     /* --- CPU --- */
-
     cpuMeanTime = 0;
     for (int j=0; j<N_ITER; j++)
     {
         cpuStartTime = clock();
     
-        sequentialIDW(knownPoints, queryPoints, zValues, KN, QN);
+        sequentialIDW(knownLocations, knownValues, queryLocations, zValues, KN, QN);
     
         cpuElapsedTime[j] = ((float)(clock() - cpuStartTime))/CLOCKS_PER_SEC;
     
@@ -112,13 +129,12 @@ int main(int argc, char **argv)
 
         cpuMeanTime += cpuElapsedTime[j];
     }
-
+    
     cpuMeanTime /= N_ITER;
     cpuSTD = getSTD(cpuMeanTime, cpuElapsedTime, N_ITER);
 
     printf("Elapsed CPU MEAN time over %d iterations: %f s\n", N_ITER, cpuMeanTime);
     printf("CPU std: %f\n\n", cpuSTD);
-
     /* --- END CPU--- */
 
     /* -- GPU -- */
@@ -130,13 +146,20 @@ int main(int argc, char **argv)
         cudaEventCreate(&stop);
         cudaEventRecord(start,0);
 
-        cudaMemcpy(devKP_blas, knownPoints_blas, sizeKP_blas, cudaMemcpyHostToDevice);
-        cudaMemcpy(devQP, queryPoints, sizeQP, cudaMemcpyHostToDevice);
+        batchDim = batchQN;
+        cudaMemcpy(devKP_blas, knownLocations, KN*sizeof(Point2D), cudaMemcpyHostToDevice);
         cudaMemcpy(devKv, knownValues, KN*sizeof(float), cudaMemcpyHostToDevice);
+        
+        for (int i=0; i<N_BATCH; i++)
+        {
+            if (i == N_BATCH-1) batchDim = QN-i*batchQN;
 
-        parallelIDW<<<nBlocks,nThreadsForBlock,shMemSize>>>(devKP_blas, devQP, devW, devKv, devZV, KN, QN, stride, nIter);
+            cudaMemcpy(devQP, &queryLocations[i*batchQN], batchDim*sizeof(Point2D), cudaMemcpyHostToDevice);
 
-        cudaMemcpy(zValuesGPU, devZV, QN*sizeof(float), cudaMemcpyDeviceToHost);   
+            parallelIDW<<<nBlocks,nThreadsForBlock,shMemSize>>>(devKP_blas, devQP, devW, devKv, devZV, KN, batchDim, stride, nIter, MAX_SHMEM_SIZE);
+
+            cudaMemcpy(&zValuesGPU[i*batchQN], devZV, batchDim*sizeof(float), cudaMemcpyDeviceToHost);     
+        }
 
         cudaEventRecord(stop,0);
         cudaEventSynchronize(stop);
@@ -145,7 +168,7 @@ int main(int argc, char **argv)
         gpuElapsedTime[j] = gpuElapsedTime[j]*0.001;
         printf("Elapsed GPU time : %f s\n", gpuElapsedTime[j]);
 
-        checkCUDAError("cublasSetVector");
+        checkCUDAError("LAST ERROR:");
 
         gpuMeanTime += gpuElapsedTime[j];
     }
@@ -159,28 +182,21 @@ int main(int argc, char **argv)
     printf("GPU std: %f\n", gpuSTD);
 
     if (updateLogCpuGpu(gpuMeanTime, cpuMeanTime, gpuSTD, cpuSTD, QN, KN, nBlocks.x, nThreadsForBlock.x) != -1) 
-        printf("\nLog updated\n");
+        printf("\nLog updated!\n");
 
     /*
     printf("Speed Up: %f\n\n", cpuElapsedTime/gpuElapsedTime);
 
     if (updateLog(gpuMeanTime, QN, KN, nBlocks.x, nThreadsForBlock.x) != -1) 
         printf("Log updated\n");
+
+    printf("Residue: %e\n", getRes(zValues, zValuesGPU, QN));
     */
 
-    //getMaxAbsError(zValues, zValuesGPU, QN, &maxErr);
-    //printf("Max error: %e\n",maxErr);
-    printf("Residue: %e\n", getRes(zValues, zValuesGPU, QN));
+    if (saveData(knownLocations, KN, queryLocations, zValues, zValuesGPU, QN, cpuElapsedTime[0], gpuElapsedTime[0]) != -1)
+        printf("Results saved! Look at your current directory! \n\n");
 
-    /*
-    if (saveData(knownPoints, KN, queryPoints, zValues, zValuesGPU, QN, cpuElapsedTime[0], gpuElapsedTime[0]) != -1)
-        printf("\nResults saved!\n");
-        */
-  
-    free(knownPoints); free(knownPoints_blas); free(queryPoints); free(zValues); free(zValuesGPU); free(knownValues); //free(res);
-    /*cudaFree(devKP);*/ cudaFree(devKP_blas); cudaFree(devQP); cudaFree(devZV); cudaFree(devW); cudaFree(devKv); //cudaFree(devRes);
-
-    cublasDestroy(handle);
-    
+    free(knownLocations); free(queryLocations); free(knownValues); free(zValues); free(zValuesGPU);
+    cudaFree(devKP_blas); cudaFree(devQP); cudaFree(devZV); cudaFree(devW); cudaFree(devKv);
     return 0;
 }
