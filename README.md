@@ -44,6 +44,8 @@ Examples:
 	./demo 1 dataset.txt locations1k.txt 1000 80
 	./demo 2 1000 1000 500 80
 	
+CPU and GPU output are saved into the current directory.
+
 * dataset.txt contains a dataset of 45147 3D points
 * locations1k.txt contains 1000 2D locations to calculate values
 * locations200k.txt contains 219076 2D locations to calculate values
