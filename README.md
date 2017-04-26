@@ -5,7 +5,7 @@ A parallel GPU version of the IDW interpolation algorithm [1] using matrix-vecto
 
 * cuBLAS_version -> cuBLAS matrix vector multiplication
 
-Language: C, Framework: CUDA 8.0 
+Language: C, Framework: CUDA 8.0, cuBLAS v2
 
 # Authors
 Mario Ruggieri
@@ -29,15 +29,24 @@ In this way you are making `demo` binary file
 	
 **Demo usage**
 
-* 1th argument: number of known points
+* 1th argument: type of usage (1 = file, 2 = random data)
 
-* 2th argument: number of values to interpolate
+* 2th argument: (type 1) known 3D points dataset file / (type 2) number of known values
 
-* 3th argument : number of CUDA block threads
+* 3th argument : (type 1) 2D locations file / (type 2) number of values to interpolate
 
-Example:
+* 4th argument : number of locations per iteration
 
-	./demo 10000 1000 100
+* 5th argument : number of CUDA block threads
+
+Examples:
+
+	./demo 1 dataset.txt locations1k.txt 1000 80
+	./demo 2 1000 1000 500 80
+	
+* dataset.txt contains a dataset of 45147 3D points
+* locations1k.txt contains 1000 2D locations to calculate values
+* locations200k.txt contains 219076 2D locations to calculate values
 
 # Version
 This is a beta version made for academic purposes.
