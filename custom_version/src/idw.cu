@@ -82,11 +82,12 @@ __global__ void parallelIDW(    Point2D *knownPoints,
                 {
                     p = shMem[i];
 
+		    d = havesineDistGPU(myPoint,p);
                     //d = sqrt((myPoint.x - p.x)*(myPoint.x - p.x) + (myPoint.y - p.y)*(myPoint.y - p.y));
-
-                    if (fabs(myPoint.x - p.x) > 0.00001 || fabs(myPoint.y - p.y) > 0.00001)
+			
+                    if (d != 0)
                     {
-                        d = havesineDistGPU(myPoint,p);
+                        
                         //if (d < SEARCH_RADIUS)
                         //{
                             w = 1/(d*d);
@@ -100,7 +101,6 @@ __global__ void parallelIDW(    Point2D *knownPoints,
                     }
                     else
                     {
-
                         for (int l=0; l<KN; l++) W[ind*KN + l] = 0;
                         W[ind*KN + i+k*MAX_SHMEM_SIZE] = 1; //1 for the zero distance point
                         wSum = 1;
