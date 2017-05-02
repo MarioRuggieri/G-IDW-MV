@@ -39,6 +39,7 @@ __global__ void parallelIDW(    Point2D *knownPoints,
     int ind = threadIdx.x + blockIdx.x*blockDim.x, smStartInd, startInd, i, k, currentKN, shift;
     float wSum = 0, w, d;
     Point2D myPoint, p;
+    int cont = 0, work = 1;
     
     shift = 0;
     currentKN = MAX_SHMEM_SIZE; //chunk current dimension
@@ -70,41 +71,44 @@ __global__ void parallelIDW(    Point2D *knownPoints,
         
         /* --- loading finished --- */
         
-        // updating the interpolated z value for each thread
-        if (ind < QN) 
+        if (work)
         {
-            myPoint = queryPoints[ind]; // some block threads are not used
-
-            for (i = 0; i < currentKN-shift; i++)
+            // updating the interpolated z value for each thread
+            if (ind < QN) 
             {
-                p = shMem[i];
+                myPoint = queryPoints[ind]; // some block threads are not used
 
-                //d = sqrt((myPoint.x - p.x)*(myPoint.x - p.x) + (myPoint.y - p.y)*(myPoint.y - p.y));
-                d = havesineDistGPU(myPoint,p);
-
-                if (d != 0)
+                for (i = 0; i < currentKN-shift; i++)
                 {
-                    //if (d < SEARCH_RADIUS)
-                    //{
-                        w = 1/(d*d);
-                        W[ind*KN + i+k*MAX_SHMEM_SIZE] = w;
-                        wSum += w;
-                    //}
-                    /*else
+                    p = shMem[i];
+
+                    //d = sqrt((myPoint.x - p.x)*(myPoint.x - p.x) + (myPoint.y - p.y)*(myPoint.y - p.y));
+
+                    if (fabs(myPoint.x - p.x) > 0.00001 || fabs(myPoint.y - p.y) > 0.00001)
                     {
-                        W[ind*KN + i+k*MAX_SHMEM_SIZE] = 0;
-                    }*/
-                }
-                else
-                {
-                    for (int l=0; l<KN; l++) W[ind*KN + l] = 0;
-                    W[ind*KN + i+k*MAX_SHMEM_SIZE] = 1; //1 for the zero distance point
-                    wSum = 1;
-                    k = nIter;
-                    break; 
-                }
-            }
+                        d = havesineDistGPU(myPoint,p);
+                        //if (d < SEARCH_RADIUS)
+                        //{
+                            w = 1/(d*d);
+                            W[ind*KN + i+k*MAX_SHMEM_SIZE] = w;
+                            wSum += w;
+                        //}
+                        /*else
+                        {
+                            W[ind*KN + i+k*MAX_SHMEM_SIZE] = 0;
+                        }*/
+                    }
+                    else
+                    {
 
+                        for (int l=0; l<KN; l++) W[ind*KN + l] = 0;
+                        W[ind*KN + i+k*MAX_SHMEM_SIZE] = 1; //1 for the zero distance point
+                        wSum = 1;
+                        work = 0;
+                        break; 
+                    }
+                }
+    	   }
         }       
 
         shift = currentKN;
