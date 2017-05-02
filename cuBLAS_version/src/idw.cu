@@ -62,6 +62,7 @@ __global__ void computeWeights(     Point2D *knownPoints,
 
         //shift used to move into knownPoints array for chunk selection
         startInd = smStartInd + shift;  
+        //if (ind == 0) printf("startInd: %d\n",startInd);
 
         if (startInd < currentKN) 
         {
@@ -74,7 +75,7 @@ __global__ void computeWeights(     Point2D *knownPoints,
         }
 
         __syncthreads();
-        
+
         /* --- loading finished --- */
         
         if (work)
@@ -95,11 +96,12 @@ __global__ void computeWeights(     Point2D *knownPoints,
                     {
                         //if (d < SEARCH_RADIUS)
                         //{
+                        //if (ind == 0) printf("%d\n",ind*KN + i+k*MAX_SHMEM_SIZE);
                             w = 1/(d*d);
                             W[ind*KN + i+k*MAX_SHMEM_SIZE] = w;
-                            wSum += w;
-                        //}
-                        /*else
+                            my_wSum += w;
+                        /*}
+                        else
                         {
                             W[ind*KN + i+k*MAX_SHMEM_SIZE] = 0;
                         }*/
@@ -108,19 +110,19 @@ __global__ void computeWeights(     Point2D *knownPoints,
                     {
                         for (int l=0; l<KN; l++) W[ind*KN + l] = 0;
                         W[ind*KN + i+k*MAX_SHMEM_SIZE] = 1; //1 for the zero distance point
-                        wSum = 1;
+                        my_wSum = 1;
                         work = 0;
                         break; 
                     }
                 }
-    	   }
-        }       
+            }       
 
-        shift = currentKN;
-        currentKN += MAX_SHMEM_SIZE; 
+            shift = currentKN;
+            currentKN += MAX_SHMEM_SIZE; 
 
-        __syncthreads();
+            __syncthreads();
         
+        }
     }
 
     if (ind < QN)
@@ -418,3 +420,4 @@ float getSTD(float xm, float x[], int N)
 
     return sqrt(s);
 }
+
