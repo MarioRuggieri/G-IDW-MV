@@ -43,7 +43,7 @@ __global__ void computeWeights(     Point2D *knownPoints,
                                     int MAX_SHMEM_SIZE)
 {
     extern __shared__ Point2D shMem[];
-    int ind = threadIdx.x + blockIdx.x*blockDim.x, smStartInd, startInd, i, k, currentKN, shift;
+    int ind = threadIdx.x + blockIdx.x*blockDim.x, smStartInd, startInd, i, k, currentKN, shift, work = 1;
     float my_wSum = 0, w, d;
     Point2D myPoint, p;
     
@@ -62,7 +62,6 @@ __global__ void computeWeights(     Point2D *knownPoints,
 
         //shift used to move into knownPoints array for chunk selection
         startInd = smStartInd + shift;  
-        //if (ind == 0) printf("startInd: %d\n",startInd);
 
         if (startInd < currentKN) 
         {
@@ -75,45 +74,46 @@ __global__ void computeWeights(     Point2D *knownPoints,
         }
 
         __syncthreads();
-
+        
         /* --- loading finished --- */
         
-        // updating the interpolated z value for each thread
-        if (ind < QN) 
+        if (work)
         {
-            myPoint = queryPoints[ind]; // some block threads are not used
-
-            for (i = 0; i < currentKN-shift; i++)
+            // updating the interpolated z value for each thread
+            if (ind < QN) 
             {
-                p = shMem[i];
+                myPoint = queryPoints[ind]; // some block threads are not used
 
-                d = havesineDistGPU(myPoint,p);
-                //d = sqrt((myPoint.x - p.x)*(myPoint.x - p.x) + (myPoint.y - p.y)*(myPoint.y - p.y));
-
-                if (d != 0)
+                for (i = 0; i < currentKN-shift; i++)
                 {
-                    //if (d < SEARCH_RADIUS)
-                    //{
-                    //if (ind == 0) printf("%d\n",ind*KN + i+k*MAX_SHMEM_SIZE);
-                        w = 1/(d*d);
-                        W[ind*KN + i+k*MAX_SHMEM_SIZE] = w;
-                        my_wSum += w;
-                    /*}
+                    p = shMem[i];
+
+                    d = havesineDistGPU(myPoint,p);
+                    //d = sqrt((myPoint.x - p.x)*(myPoint.x - p.x) + (myPoint.y - p.y)*(myPoint.y - p.y));
+
+                    if (d != 0)
+                    {
+                        //if (d < SEARCH_RADIUS)
+                        //{
+                            w = 1/(d*d);
+                            W[ind*KN + i+k*MAX_SHMEM_SIZE] = w;
+                            wSum += w;
+                        //}
+                        /*else
+                        {
+                            W[ind*KN + i+k*MAX_SHMEM_SIZE] = 0;
+                        }*/
+                    }
                     else
                     {
-                        W[ind*KN + i+k*MAX_SHMEM_SIZE] = 0;
-                    }*/
+                        for (int l=0; l<KN; l++) W[ind*KN + l] = 0;
+                        W[ind*KN + i+k*MAX_SHMEM_SIZE] = 1; //1 for the zero distance point
+                        wSum = 1;
+                        work = 0;
+                        break; 
+                    }
                 }
-                else
-                {
-                    for (int l=0; l<KN; l++) W[ind*KN + l] = 0;
-                    W[ind*KN + i+k*MAX_SHMEM_SIZE] = 1; //1 for the zero distance point
-                    my_wSum = 1;
-                    k = nIter;
-                    break; 
-                }
-            }
-
+    	   }
         }       
 
         shift = currentKN;
