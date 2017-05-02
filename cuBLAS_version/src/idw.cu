@@ -116,13 +116,12 @@ __global__ void computeWeights(     Point2D *knownPoints,
                     }
                 }
             }       
-
-            shift = currentKN;
-            currentKN += MAX_SHMEM_SIZE; 
-
-            __syncthreads();
-        
         }
+	    
+	shift = currentKN;
+        currentKN += MAX_SHMEM_SIZE; 
+
+        __syncthreads();
     }
 
     if (ind < QN)
