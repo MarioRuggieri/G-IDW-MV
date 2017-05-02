@@ -219,9 +219,9 @@ int main(int argc, char **argv)
 
     if (updateLog(gpuMeanTime, QN, KN, nBlocks.x, nThreadsForBlock.x) != -1) 
         printf("Log updated\n");
-
-    printf("Residue: %e\n", getRes(zValues, zValuesGPU, QN));
     */
+	
+    printf("Residue: %e\n", getRes(zValues, zValuesGPU, QN));
 
     if (saveData(knownLocations, KN, queryLocations, zValues, zValuesGPU, QN, cpuElapsedTime[0], gpuElapsedTime[0]) != -1)
         printf("Results saved! Look at your current directory! \n\n");
