@@ -11,7 +11,7 @@ void checkCUDAError(const char* msg)
     }
 }
 
-__device__ float havesineDistGPU(Point2D p1, Point2D p2)
+__device__ float haversineDistGPU(Point2D p1, Point2D p2)
 {
     float   lat1 = PI*p1.y/180,
             lat2 = PI*p2.y/180,
@@ -33,13 +33,13 @@ __global__ void parallelIDW(    Point2D *knownPoints,
                                 int QN, 
                                 int stride,
                                 int nIter,
-                                int MAX_SHMEM_SIZE)
+                                int MAX_SHMEM_SIZE,
+                                float searchRadius)
 {
     extern __shared__ Point2D shMem[];
-    int ind = threadIdx.x + blockIdx.x*blockDim.x, smStartInd, startInd, i, k, currentKN, shift;
+    int ind = threadIdx.x + blockIdx.x*blockDim.x, smStartInd, startInd, i, k, currentKN, shift, work = 1;
     float wSum = 0, w, d;
     Point2D myPoint, p;
-    int cont = 0, work = 1;
     
     shift = 0;
     currentKN = MAX_SHMEM_SIZE; //chunk current dimension
@@ -82,22 +82,21 @@ __global__ void parallelIDW(    Point2D *knownPoints,
                 {
                     p = shMem[i];
 
-		    d = havesineDistGPU(myPoint,p);
+		            d = haversineDistGPU(myPoint,p);
                     //d = sqrt((myPoint.x - p.x)*(myPoint.x - p.x) + (myPoint.y - p.y)*(myPoint.y - p.y));
 			
                     if (d != 0)
                     {
-                        
-                        //if (d < SEARCH_RADIUS)
-                        //{
+                        if (d < searchRadius)
+                        {
                             w = 1/(d*d);
                             W[ind*KN + i+k*MAX_SHMEM_SIZE] = w;
                             wSum += w;
-                        //}
-                        /*else
+                        }
+                        else
                         {
                             W[ind*KN + i+k*MAX_SHMEM_SIZE] = 0;
-                        }*/
+                        }
                     }
                     else
                     {
@@ -117,7 +116,8 @@ __global__ void parallelIDW(    Point2D *knownPoints,
         __syncthreads();
         
     }
-    
+
+    // A scalar product for each thread
     if (ind < QN)
     {
         zValues[ind] = 0;
@@ -132,7 +132,7 @@ __global__ void parallelIDW(    Point2D *knownPoints,
     
 }
 
-float havesineDistCPU(Point2D p1, Point2D p2)
+float haversineDistCPU(Point2D p1, Point2D p2)
 {
     float   lat1 = PI*p1.y/180,
             lat2 = PI*p2.y/180,
@@ -145,7 +145,7 @@ float havesineDistCPU(Point2D p1, Point2D p2)
 }
 
 // IDW sequential CPU version
-void sequentialIDW(Point2D *knownPoints, float* knownValues, Point2D *queryPoints, float *zValues, int KN, int QN)
+int sequentialIDW(Point2D *knownPoints, float* knownValues, Point2D *queryPoints, float *zValues, int KN, int QN, float searchRadius)
 {
     int i,j;
     float wSum, w, d;
@@ -156,28 +156,33 @@ void sequentialIDW(Point2D *knownPoints, float* knownValues, Point2D *queryPoint
 
         for (j=0; j<KN; j++)
         {
-            d = havesineDistCPU(queryPoints[i],knownPoints[j]);
-            //d = sqrt(   (queryPoints[i].x - knownPoints[j].x)*(queryPoints[i].x - knownPoints[j].x) + (queryPoints[i].y - knownPoints[j].y)*(queryPoints[i].y - knownPoints[j].y));
+            d = haversineDistCPU(queryPoints[i],knownPoints[j]);
+            /*d = sqrt( (queryPoints[i].x - knownPoints[j].x)*(queryPoints[i].x - knownPoints[j].x) + 
+                        (queryPoints[i].y - knownPoints[j].y)*(queryPoints[i].y - knownPoints[j].y));*/
             if (d != 0)
             {
-                //if (d < SEARCH_RADIUS)
-                //{
+                if (d < searchRadius)
+                {
                     w = 1/(d*d);
                     wSum += w;
                     zValues[i] += w*knownValues[j];
-                //}
-
+                }
             }
             else
             {
                 zValues[i] = knownValues[j];
-		        wSum = 1;
+                wSum = 1;
                 break;
             }
         }
-
-        zValues[i] /= wSum;
+        
+        if (wSum != 0)
+            zValues[i] /= wSum;
+        else 
+            return -1;
     }
+
+    return 0;
 }
 
 // Random generation of 2D known points and 2D query points
@@ -188,15 +193,15 @@ void generateRandomData(Point2D *knownPoints, float *knownValues, Point2D *query
 
     for (i=0; i<KN; i++)
     {
-        knownPoints[i].x = (rand()/(float)(RAND_MAX))* 180;
-        knownPoints[i].y = (rand()/(float)(RAND_MAX))* 180;
-        knownValues[i] = (rand()/(float)(RAND_MAX))* 180;
+        knownPoints[i].x = (rand()/(float)(RAND_MAX));
+        knownPoints[i].y = (rand()/(float)(RAND_MAX));
+        knownValues[i] = (rand()/(float)(RAND_MAX));
     }
 
     for (i=0; i<QN; i++)
     {
-        queryPoints[i].x = (rand()/(float)(RAND_MAX))* 90;
-        queryPoints[i].y = (rand()/(float)(RAND_MAX))* 90;
+        queryPoints[i].x = (rand()/(float)(RAND_MAX));
+        queryPoints[i].y = (rand()/(float)(RAND_MAX));
     }
 }
 
@@ -225,7 +230,7 @@ void generateDataset(char *filename, Point2D *knownLocations, float *knownValues
     FILE *fp = fopen(filename,"r");
     int i=0;
 
-    while(fscanf(fp,"%f;%f;%f;",&(knownLocations[i].x),&(knownLocations[i].y),&(knownValues[i])) == 3)
+    while(fscanf(fp,"%f;%f;%f;",&knownLocations[i].x,&knownLocations[i].y,&knownValues[i]) == 3)
     {
         i++;
     }
@@ -238,7 +243,7 @@ void generateGrid(char *filename, Point2D *queryLocations)
     FILE *fp = fopen(filename,"r");
     int i=0;
 
-    while(fscanf(fp,"%f;%f;",&(queryLocations[i].x),&(queryLocations[i].y)) == 2 )
+    while(fscanf(fp,"%f;%f;",&queryLocations[i].x,&queryLocations[i].y) == 2 )
     {
         i++;
     }
@@ -289,7 +294,6 @@ int saveData(Point2D *knownPoints, int KN, Point2D *queryPoints, float *zValues,
     
     fclose(f);
     */
-
     // Saving CPU output
     f = fopen("cpuOutput.txt", "w");
     if (f == NULL)
@@ -299,7 +303,7 @@ int saveData(Point2D *knownPoints, int KN, Point2D *queryPoints, float *zValues,
     }
     
     for (int i=0; i<QN; i++)
-        fprintf(f, "%f;%f;%f;\n", queryPoints[i].x, queryPoints[i].y, zValues[i]);
+        fprintf(f, "(x: %f, y: %f, z: %f)\n", queryPoints[i].x, queryPoints[i].y, zValues[i]);
     
     fclose(f);
 
@@ -312,7 +316,7 @@ int saveData(Point2D *knownPoints, int KN, Point2D *queryPoints, float *zValues,
     }
     
     for (int i=0; i<QN; i++)
-        fprintf(f, "%f;%f;%f;\n", queryPoints[i].x, queryPoints[i].y, zValuesGPU[i]);
+        fprintf(f, "(x: %f, y: %f, z: %f)\n", queryPoints[i].x, queryPoints[i].y, zValuesGPU[i]);
     
     fclose(f);
 
@@ -332,7 +336,7 @@ int saveData(Point2D *knownPoints, int KN, Point2D *queryPoints, float *zValues,
     return 0;
 }
 
-int updateLog(float gpuMeanTime, int QN, int KN, int nBlocks, int nThreadsForBlock)
+int updateLog(float gpuElapsedTime, int QN, int KN, int nBlocks, int nThreadsForBlock)
 {
     FILE *f;
 
@@ -344,14 +348,14 @@ int updateLog(float gpuMeanTime, int QN, int KN, int nBlocks, int nThreadsForBlo
     }
 
     fprintf(f, "KnownPointsNum: %d QueryPointsNum: %d BlockNum: %d ThreadNumForBlock: %d Time: %f s\n", 
-                KN, QN, nBlocks, nThreadsForBlock, gpuMeanTime);
+                KN, QN, nBlocks, nThreadsForBlock, gpuElapsedTime);
     
     fclose(f);
 
     return 0;
 }
 
-int updateLogCpuGpu(float gpuMeanTime, float cpuMeanTime, float gpuSTD, float cpuSTD, int QN, int KN, int nBlocks, int nThreadsForBlock)
+int updateLogCpuGpu(float gpuElapsedTime, float cpuElapsedTime, int QN, int KN, int nBlocks, int nThreadsForBlock)
 {
     FILE *f;
 
@@ -362,14 +366,15 @@ int updateLogCpuGpu(float gpuMeanTime, float cpuMeanTime, float gpuSTD, float cp
         return(-1);
     }
 
-    fprintf(f, "KnownPointsNum: %d QueryPointsNum: %d BlockNum: %d ThreadNumForBlock: %d CPUMeanTime: %f s CPUstd: %f GPUMeanTime: %f s GPUstd: %f\n", 
-                KN, QN, nBlocks, nThreadsForBlock, cpuMeanTime, cpuSTD, gpuMeanTime, gpuSTD);
+    fprintf(f, "KnownPointsNum: %d QueryPointsNum: %d BlockNum: %d ThreadNumForBlock: %d CPUElapsedTime: %f s GPUElapsedTime: %f s\n", 
+                KN, QN, nBlocks, nThreadsForBlock, cpuElapsedTime, gpuElapsedTime);
     
     fclose(f);
 
     return 0;
 }
 
+/*
 void getMaxAbsError(float *zValues, float *zValuesGPU, int QN, float *maxErr)
 {
     int i;
@@ -380,12 +385,26 @@ void getMaxAbsError(float *zValues, float *zValuesGPU, int QN, float *maxErr)
     for (i = 0; i < QN; i++)
     {
         err = abs(zValues[i]-zValuesGPU[i]);
-        if (err > 9.9e-6)
-            printf("ERRORE riga %d -> %lf ; %lf\n",i, zValues[i], zValuesGPU[i]);
+        if (err > 1e-6)
+            printf("ERRORE\n%lf ; %lf\n\n",zValues[i],zValuesGPU[i]);
         if (err > *maxErr)
             *maxErr = err;
     }
 }
+
+float getSTD(float xm, float x[], int N)
+{
+    float s = 0;
+    for (int i=0; i<N; i++)
+    {
+        s += pow(x[i] - xm,2);
+    }
+
+    s /= N-1;
+
+    return sqrt(s);
+}
+*/
 
 float getRes(float *ref, float *result, int QN)
 {
@@ -405,17 +424,4 @@ float getRes(float *ref, float *result, int QN)
     }
 
     return sqrt(res)/ref_norm;
-}
-
-float getSTD(float xm, float x[], int N)
-{
-    float s = 0;
-    for (int i=0; i<N; i++)
-    {
-        s += pow(x[i] - xm,2);
-    }
-
-    s /= N-1;
-
-    return sqrt(s);
 }
