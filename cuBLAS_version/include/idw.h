@@ -10,7 +10,6 @@
 
 #define PI 3.14159265
 #define R 6371e3
-//#define SEARCH_RADIUS 1000
 
 struct point2D
 {
@@ -22,7 +21,7 @@ typedef struct point2D Point2D;
 
 void checkCUDAError(const char* msg);
 
-__device__ float havesineDistGPU(Point2D a, Point2D b);
+__device__ float haversineDistGPU(Point2D a, Point2D b);
 
 __global__ void divideByWsum(float *devZV, float *devWsum, int QN); 
 
@@ -34,11 +33,12 @@ __global__ void computeWeights(   	Point2D *knownPoints,
                                     int stride, 
                                     float* wSum,
                                     int nIter,
-                                    int MAX_SHMEM_SIZE); 
+                                    int MAX_SHMEM_SIZE,
+                                    float searchRadius); 
 
-float havesineDistCPU(Point2D a, Point2D b);
+float haversineDistCPU(Point2D a, Point2D b);
 
-void sequentialIDW(Point2D *knownPoints, float* knownValues, Point2D *queryPoints, float *zValues, int KN, int QN);
+int sequentialIDW(Point2D *knownPoints, float* knownValues, Point2D *queryPoints, float *zValues, int KN, int QN, float searchRadius);
 
 void generateRandomData(Point2D *knownPoints, float *knownValues, Point2D *queryPoints, int KN, int QN);
 
@@ -52,12 +52,14 @@ int saveData(Point2D *knownPoints, int KN, Point2D *queryPoints, float *zValues,
 
 int updateLog(float gpuMeanTime, int QN, int KN, int nBlocks, int nThreadsForBlock);
 
-int updateLogCpuGpu(float gpuMeanTime, float cpuMeanTime, float gpuSTD, float cpuSTD, int QN, int KN, int nBlocks, int nThreadsForBlock);
+int updateLogCpuGpu(float gpuMeanTime, float cpuMeanTime, int QN, int KN, int nBlocks, int nThreadsForBlock);
 
+/*
 void getMaxAbsError(float *zValues, float *zValuesGPU, int QN, float *maxErr);
 
-float getRes(float *zValues, float *zValuesGPU, int QN);
-
 float getSTD(float xm, float x[], int N);
+*/
+
+float getRes(float *zValues, float *zValuesGPU, int QN);
 
 #endif
