@@ -35,20 +35,36 @@ In this way you are making `demo` binary file
 
 * 3th argument : (type 1) 2D locations file / (type 2) number of values to interpolate
 
-* 4th argument : number of locations per iteration
+* 4th argument : number of query locations per iteration
 
 * 5th argument : number of CUDA block threads
 
+* 6th argument: search radius
+
 Examples:
 
-	./demo 1 dataset.txt locations1k.txt 1000 80
-	./demo 2 1000 1000 500 80
+	./demo 1 dataset.txt grid.txt 5000 256 400
+	./demo 2 20000 300000 5000 256 400
 	
 CPU and GPU output are saved into the current directory.
 
-* dataset.txt contains a dataset of 45147 3D points
-* locations1k.txt contains 1000 2D locations to calculate values
-* locations200k.txt contains 219076 2D locations to calculate values
+Each line of the dataset file must have this layout: longitude;latitude;z;
+
+For example:
+
+	13.70104167;40.84895833;-702.20;
+	13.70312500;40.84895833;-700.20;
+	...
+
+Each line of the grid file (query locations) must have this layout: longitude;latitude;
+
+For example:
+
+	13.70104167;40.55104167;
+	13.70154225;40.55104167;
+	...
+	
+Software uses single-precision floating-points.
 
 # Version
 This is a beta version made for academic purposes.
@@ -71,3 +87,5 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 # References
 [1] Shepard D. , A two-dimensional interpolation function for irregularly-spaced data, Proceedings of the 1968 ACM National Conference. pp. 517–524 
+
+[2] Marcellino L., Montella R., Kosta S., Galletti A., Di Luccio D., Santopietro V., Ruggieri M., Lapegna M., Laccetti G., Using GPGPU accelerated interpolation algorithms for marine bathymetry processing with on-premises and cloud based computational resources, 2017 (Submitted)
