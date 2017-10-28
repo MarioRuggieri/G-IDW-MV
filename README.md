@@ -10,7 +10,7 @@ Language: C, Framework: CUDA 8.0, cuBLAS v2
 # Authors
 Mario Ruggieri
 
-e-mail: mario.ruggieri@studenti.uniparthenope.it
+e-mail: mario.ruggieri@uniparthenope.it
 
 Livia Marcellino
 
@@ -86,6 +86,6 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 # References
-[1] Marcellino L., Montella R., Ruggieri M., Di Luccio D., Santopietro V. et al., Using GPGPU accelerated interpolation algorithms for marine bathymetry processing with on-premises and cloud based computational resources, 2017 (Under Review)
+[1] Marcellino L., Montella R., Ruggieri M. et al., Using GPGPU accelerated interpolation algorithms for marine bathymetry processing with on-premises and cloud based computational resources, 2017 (Accepted)
 
 [2] Shepard D. , A two-dimensional interpolation function for irregularly-spaced data, Proceedings of the 1968 ACM National Conference. pp. 517–524 
